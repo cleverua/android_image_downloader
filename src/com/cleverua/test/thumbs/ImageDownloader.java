@@ -16,25 +16,23 @@
 
 package com.cleverua.test.thumbs;
 
-import java.io.FilterInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.lang.ref.WeakReference;
-import java.util.LinkedList;
-
-import org.apache.http.HttpEntity;
-import org.apache.http.HttpResponse;
-import org.apache.http.HttpStatus;
-import org.apache.http.client.HttpClient;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.impl.client.DefaultHttpClient;
-
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.Drawable;
 import android.os.AsyncTask;
 import android.util.Log;
 import android.widget.ImageView;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.HttpStatus;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpGet;
+
+import java.io.FilterInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.ref.WeakReference;
+import java.util.LinkedList;
 
 /**
  * This helper class download images from the Internet and binds those with the provided ImageView.
@@ -50,10 +48,10 @@ public class ImageDownloader {
     BitmapCache bitmapCache;
     
     /**
-     * Current rrunning task
+     * Current running task
      */
-    private AsyncTask<?, ?, ?> loaderTask;
-    private LinkedList<AsyncTask<?,?,?>> pendingTasks = new LinkedList<AsyncTask<?, ?, ?>>();
+    private BitmapDownloaderTask loaderTask;
+    private LinkedList<BitmapDownloaderTask> pendingTasks = new LinkedList<BitmapDownloaderTask>();
     
     public ImageDownloader(BitmapCache bitmapCache) {
     	this.bitmapCache = bitmapCache;
@@ -74,7 +72,7 @@ public class ImageDownloader {
         if (bitmap == null) {
             forceDownload(url, imageView, placeHolder);
         } else {
-            cancelPotentialDownload(url, imageView);
+            removePotentialDownload(url, imageView);
             imageView.setImageBitmap(bitmap);
         }
     }
@@ -90,34 +88,28 @@ public class ImageDownloader {
             return;
         }
 
-        if (cancelPotentialDownload(url, imageView)) {
+        if (removePotentialDownload(url, imageView)) {
             BitmapDownloaderTask task = new BitmapDownloaderTask(url, imageView);
             imageView.setImageDrawable(placeHolder);
             imageView.setTag(new WeakReference<BitmapDownloaderTask>(task));
-            
+
             imageView.setMinimumHeight(156);
-            
+
+            pendingTasks.offerLast(task);
             if (loaderTask == null || loaderTask.getStatus() == AsyncTask.Status.FINISHED) {
-                task.execute();
-            } else {
-                pendingTasks.add(task);
+                loaderTask = pendingTasks.poll();
+                loaderTask.execute();
             }
         }
     }
 
-    /**
-     * Returns true if the current download has been canceled or if there was no download in
-     * progress on this image view.
-     * Returns false if the download in progress deals with the same url. The download is not
-     * stopped in that case.
-     */
-    private static boolean cancelPotentialDownload(String url, ImageView imageView) {
+    private boolean removePotentialDownload(String url, ImageView imageView) {
         BitmapDownloaderTask bitmapDownloaderTask = getBitmapDownloaderTask(imageView);
 
         if (bitmapDownloaderTask != null) {
             String bitmapUrl = bitmapDownloaderTask.url;
             if ((bitmapUrl == null) || (!bitmapUrl.equals(url))) {
-                bitmapDownloaderTask.cancel(true);
+                pendingTasks.remove(bitmapDownloaderTask);
             } else {
                 // The same URL is already being downloaded.
                 return false;
@@ -145,7 +137,7 @@ public class ImageDownloader {
 
     Bitmap downloadBitmap(String url) {
         // AndroidHttpClient is not allowed to be used from the main thread
-        final HttpClient client = new DefaultHttpClient();
+        HttpClient client = HttpClientFactory.getThreadSafeClient();
         final HttpGet getRequest = new HttpGet(url);
 
         try {
@@ -229,7 +221,7 @@ public class ImageDownloader {
          */
         @Override
         protected Bitmap doInBackground(Void... params) {
-        	ImageView image = imageViewReference.get(); 
+        	ImageView image = imageViewReference.get();
             if (image != null && this == getBitmapDownloaderTask(image)) {
                 return downloadBitmap(url);
             } else {
@@ -257,6 +249,12 @@ public class ImageDownloader {
                     imageView.setImageBitmap(bitmap);
                 }
             }
+
+            if (!pendingTasks.isEmpty()) {
+                loaderTask = pendingTasks.poll();
+                loaderTask.execute();
+            }
+
         }
     }
 }
